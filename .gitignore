@@ -1,0 +1,21 @@
+# secrets
+.env
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# downloaded task data (large, fetched on demand)
+tasks/
+cybergym_data/
+*.tar.gz
+*.7z
+
+# runs / outputs
+runs/
+
+# os
+.DS_Store
