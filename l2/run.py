@@ -7,7 +7,7 @@ import datetime
 import json
 import os
 
-from . import config, judge
+from . import config, judge, skills
 from .agent import run as run_agent
 from .memory import Memory
 from .tools import Tools
@@ -95,18 +95,27 @@ def write_report(run_dir, task, trace, hyps, sc, grounded):
     open(os.path.join(run_dir, "report.md"), "w").write("\n".join(lines))
 
 
-def run_task(task_id, level=2, model=None, max_steps=20, quiet=False):
+def run_task(task_id, level=2, model=None, max_steps=20, quiet=False,
+             skills_mode="off", lean=False):
     task = load_task(task_id, level)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(config.RUNS_DIR, f"{task_id.replace(':', '_')}_{ts}")
+    suffix = f"_skills-{skills_mode}" if skills_mode != "off" else ""
+    run_dir = os.path.join(config.RUNS_DIR, f"{task_id.replace(':', '_')}_{ts}{suffix}")
     os.makedirs(run_dir, exist_ok=True)
+
+    cards, tokens = skills.select(skills_mode, task.get("crash_log", ""),
+                                  task.get("description", ""))
+    skill_text = skills.render(cards)
+    card_ids = [c["id"] for c in cards]
 
     mem = Memory(run_dir)
     tools = Tools(task["browse_root"], mem)
-    print(f"== L2 run: {task_id} (level{level}, model={model or config.LLM_MODEL}) ==")
+    print(f"== L2 run: {task_id} (level{level}, model={model or config.LLM_MODEL}, "
+          f"baseline={'lean' if lean else 'rich'}, "
+          f"skills={skills_mode} -> {card_ids or 'none'}) ==")
     trace = run_agent(task, tools, mem, model=model, max_steps=max_steps,
                       trace_path=os.path.join(run_dir, "trace.jsonl"),
-                      verbose=not quiet)
+                      verbose=not quiet, skill_text=skill_text, lean=lean)
 
     hyps = mem.final_hypotheses()
     diff = open(task["patch_path"], errors="replace").read() if os.path.exists(task["patch_path"]) else ""
@@ -114,6 +123,10 @@ def run_task(task_id, level=2, model=None, max_steps=20, quiet=False):
     sc["groundedness"] = judge.groundedness(hyps, tools.read_lines)
     sc["task_id"] = task_id
     sc["steps"] = len(trace)
+    sc["skills_mode"] = skills_mode
+    sc["skill_cards"] = card_ids
+    sc["skill_signature"] = sorted(tokens)
+    sc["baseline"] = "lean" if lean else "rich"
     json.dump(sc, open(os.path.join(run_dir, "score.json"), "w"), indent=2, ensure_ascii=False)
     write_report(run_dir, task, trace, hyps, sc, sc["groundedness"])
 
@@ -131,8 +144,13 @@ def main():
     ap.add_argument("--model", default=None)
     ap.add_argument("--max-steps", type=int, default=20)
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--skills", default="off", choices=["off", "auto", "all"],
+                    help="inject bug-class skill cards (off=baseline)")
+    ap.add_argument("--lean", action="store_true",
+                    help="use the neutral baseline prompt (no built-in methodology)")
     args = ap.parse_args()
-    run_task(args.task, args.level, args.model, args.max_steps, args.quiet)
+    run_task(args.task, args.level, args.model, args.max_steps, args.quiet,
+             skills_mode=args.skills, lean=args.lean)
 
 
 if __name__ == "__main__":

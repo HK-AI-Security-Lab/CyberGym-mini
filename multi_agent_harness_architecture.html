@@ -1,0 +1,988 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Multi-Agent Vulnerability Harness Architecture</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #657086;
+      --line: #d9deea;
+      --blue: #2563eb;
+      --cyan: #0891b2;
+      --violet: #7c3aed;
+      --orange: #ea580c;
+      --green: #16a34a;
+      --red: #dc2626;
+      --shadow: 0 10px 28px rgba(23, 32, 51, 0.08);
+      --radius: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #e8f0ff 0, transparent 30%),
+        radial-gradient(circle at top right, #f2e8ff 0, transparent 24%), var(--bg);
+      color: var(--ink);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", sans-serif;
+    }
+
+    .page {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 22px auto;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+    }
+
+    .subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.75);
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(23, 32, 51, 0.05);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.12);
+    }
+
+    .canvas {
+      display: grid;
+      grid-template-columns: 240px 1fr 250px;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.86);
+      border: 1px solid rgba(217, 222, 234, 0.9);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .side {
+      padding: 14px;
+    }
+
+    .side h2,
+    .main h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+    }
+
+    .side-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .side-list li {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .side-list b {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 12px;
+    }
+
+    .side-list span {
+      color: var(--muted);
+    }
+
+    .main {
+      padding: 14px;
+      min-width: 0;
+    }
+
+    .lane {
+      position: relative;
+      display: grid;
+      grid-template-columns: 94px 1fr;
+      gap: 12px;
+      align-items: stretch;
+      margin-bottom: 10px;
+    }
+
+    .lane:last-child {
+      margin-bottom: 0;
+    }
+
+    .lane-label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 13px;
+      color: #fff;
+      font-weight: 800;
+      font-size: 13px;
+      text-align: center;
+      line-height: 1.2;
+      padding: 10px;
+    }
+
+    .lane-label.input { background: linear-gradient(135deg, var(--cyan), #0e7490); }
+    .lane-label.l2 { background: linear-gradient(135deg, var(--blue), #1d4ed8); }
+    .lane-label.l1 { background: linear-gradient(135deg, var(--orange), #c2410c); }
+    .lane-label.feedback { background: linear-gradient(135deg, var(--violet), #6d28d9); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .flow.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .flow.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      position: relative;
+      min-height: 84px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      overflow: hidden;
+      cursor: pointer;
+      text-align: left;
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+      appearance: none;
+      font: inherit;
+      color: inherit;
+    }
+
+    .card:hover,
+    .card.active {
+      transform: translateY(-1px);
+      border-color: rgba(37, 99, 235, 0.45);
+      box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: var(--blue);
+    }
+
+    .card.input::before { background: var(--cyan); }
+    .card.l2::before { background: var(--blue); }
+    .card.blackboard::before { background: #475569; }
+    .card.l1::before { background: var(--orange); }
+    .card.feedback::before { background: var(--violet); }
+    .card.metric::before { background: var(--green); }
+    .card.risk::before { background: var(--red); }
+
+    .card h3 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      line-height: 1.2;
+      letter-spacing: -0.01em;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.35;
+    }
+
+    .arrow-row {
+      display: grid;
+      grid-template-columns: 94px 1fr;
+      gap: 12px;
+      margin: -1px 0 9px;
+    }
+
+    .arrow-spacer {
+      min-height: 8px;
+    }
+
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .blackboard-wrap {
+      display: grid;
+      grid-template-columns: 1fr 150px 1fr;
+      gap: 9px;
+      align-items: stretch;
+    }
+
+    .blackboard {
+      min-height: 92px;
+      color: #fff;
+      border-color: #334155;
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+    }
+
+    .blackboard p,
+    .blackboard h3 {
+      color: #fff;
+    }
+
+    .mini-stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .tagline {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+
+    .callout {
+      padding: 11px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .callout b {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+
+    .callout span {
+      color: var(--muted);
+    }
+
+    .metrics {
+      display: grid;
+      gap: 8px;
+    }
+
+    .detail-panel {
+      display: grid;
+      gap: 10px;
+    }
+
+    .detail-title {
+      padding: 12px;
+      border-radius: 14px;
+      background: #0f172a;
+      color: #fff;
+    }
+
+    .detail-title h3 {
+      margin: 0 0 5px;
+      font-size: 15px;
+    }
+
+    .detail-title p {
+      margin: 0;
+      color: #cbd5e1;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .detail-block {
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #fff;
+    }
+
+    .detail-block b {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12.5px;
+    }
+
+    .detail-block ul {
+      display: grid;
+      gap: 5px;
+      margin: 0;
+      padding-left: 16px;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.32;
+    }
+
+    .data-flow {
+      margin: 10px 0;
+      padding: 10px 12px;
+      border: 1px dashed #b7c1d6;
+      border-radius: 14px;
+      background: #f8fafc;
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .loop-box {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 34px 1fr 34px 1fr;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid rgba(124, 58, 237, 0.22);
+      border-radius: 15px;
+      background: linear-gradient(135deg, rgba(124, 58, 237, 0.08), rgba(255, 255, 255, 0.95));
+    }
+
+    .loop-node {
+      min-height: 62px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #fff;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .loop-node:hover,
+    .loop-node.active {
+      transform: translateY(-1px);
+      border-color: rgba(124, 58, 237, 0.45);
+      box-shadow: 0 10px 24px rgba(124, 58, 237, 0.12);
+    }
+
+    .loop-node h3 {
+      margin: 0 0 4px;
+      font-size: 12.5px;
+    }
+
+    .loop-node p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11.2px;
+      line-height: 1.3;
+    }
+
+    .loop-arrow {
+      color: var(--violet);
+      font-size: 18px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .return-arrow {
+      grid-column: 1 / -1;
+      margin-top: -2px;
+      color: var(--violet);
+      font-size: 11.5px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .investment {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .metric-box {
+      padding: 10px;
+      border-radius: 13px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .metric-box strong {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 12.5px;
+    }
+
+    .metric-box span {
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.3;
+    }
+
+    footer {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 11.5px;
+      text-align: right;
+    }
+
+    @media (max-width: 980px) {
+      .canvas,
+      header {
+        grid-template-columns: 1fr;
+      }
+
+      .flow,
+      .flow.three,
+      .flow.two,
+      .tagline {
+        grid-template-columns: 1fr;
+      }
+
+      .blackboard-wrap {
+        grid-template-columns: 1fr;
+      }
+
+      .loop-box {
+        grid-template-columns: 1fr;
+      }
+
+      .loop-arrow {
+        transform: rotate(90deg);
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .page {
+        width: 100%;
+        margin: 0;
+      }
+
+      .panel,
+      .card,
+      .callout,
+      .metric-box,
+      .badge {
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div>
+        <h1>Multi-Agent + Harness 漏洞挖掘架构</h1>
+        <p class="subtitle">
+          目标不是堆一个更强模型，而是用专职 agent、共享黑板、动态验证和反馈闭环，把
+          <b>likely</b> 候选推进到 <b>confirmed</b> 漏洞。
+        </p>
+      </div>
+      <div class="badge"><span class="dot"></span>打样主指标：confirmed rate</div>
+    </header>
+
+    <section class="canvas">
+      <aside class="panel side">
+        <h2>业务方输入资源</h2>
+        <ul class="side-list">
+          <li><b>复现任务包</b><span>3-5 个已修复漏洞：vul/fix 源码、patch、描述</span></li>
+          <li><b>可执行环境</b><span>Docker/compose、构建脚本、依赖缓存、runner 权限</span></li>
+          <li><b>入口与协议</b><span>fuzz target、CLI、HTTP/RPC、文件格式、seed</span></li>
+          <li><b>动态证据</b><span>crash log、stack、trace、coverage、请求响应</span></li>
+          <li><b>评测标签</b><span>root cause、severity、人工审核结论、失败原因</span></li>
+        </ul>
+
+        <div class="investment">
+          <h2>投资诉求</h2>
+          <div class="metric-box">
+            <strong>样本资源</strong>
+            <span>业务方提供可复现任务包和安全 owner，保证能判断误报/漏报。</span>
+          </div>
+          <div class="metric-box">
+            <strong>运行资源</strong>
+            <span>amd64 机器、Docker 权限、registry mirror、日志/产物存储。</span>
+          </div>
+          <div class="metric-box">
+            <strong>实验预算</strong>
+            <span>LLM API batch 预算，支持多策略、多轮 attempts、重复实验。</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="panel main">
+        <div class="lane">
+          <div class="lane-label input">Task<br />Package</div>
+          <div class="flow three">
+            <button class="card input active" data-node="task">
+              <h3>目标任务</h3>
+              <p>漏洞描述、影响模块、高风险入口、允许可见的信息级别。</p>
+            </button>
+            <button class="card input" data-node="oracle">
+              <h3>vul / fix 对照</h3>
+              <p>vulnerable commit、fixed commit、patch.diff 作为离线 oracle。</p>
+            </button>
+            <button class="card input" data-node="runtime">
+              <h3>运行与判据</h3>
+              <p>镜像、启动命令、输入方式、什么算 crash/越权/泄露。</p>
+            </button>
+          </div>
+        </div>
+
+        <div class="data-flow">
+          数据流 1：业务任务包 → Prepare Worker。输入包括源码、描述、crash log、入口文档、构建信息；输出为 code_map、entrypoints、candidate_scopes。
+        </div>
+
+        <div class="lane">
+          <div class="lane-label l2">L2<br />Reasoning</div>
+          <div class="blackboard-wrap">
+            <div class="mini-stack">
+              <button class="card l2" data-node="prepare">
+                <h3>Prepare Worker</h3>
+                <p>构建 code map、入口清单、crash frame 映射、候选 scope。</p>
+              </button>
+              <button class="card l2" data-node="auditor">
+                <h3>Auditor Ensemble</h3>
+                <p>crash-guided / structure-guided / skill-guided 多视角找候选。</p>
+              </button>
+            </div>
+            <button class="card blackboard" data-node="blackboard">
+              <h3>Shared Blackboard</h3>
+              <p>hypotheses<br />evidence<br />code_map<br />trace</p>
+            </button>
+            <div class="mini-stack">
+              <button class="card l2" data-node="checker">
+                <h3>Evidence Checker</h3>
+                <p>检查证据缺口与硬约束，不做空泛对抗讨论。</p>
+              </button>
+              <button class="card l2" data-node="ranker">
+                <h3>Ranker / Prioritizer</h3>
+                <p>去重、排序，输出 top-k likely findings 给 L1。</p>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="data-flow">
+          数据流 2：Prepare 的 code_map 限制 Auditor 读代码范围；Auditor 只提交结构化 hypotheses/evidence；Evidence Checker 只围绕证据做硬检查；Ranker 只读黑板，不再自由读新代码。
+        </div>
+
+        <div class="lane">
+          <div class="lane-label l1">L1<br />Prove</div>
+          <div class="flow three">
+            <button class="card l1" data-node="inputcrafter">
+              <h3>InputCrafter</h3>
+              <p>根据 top-k finding、bug class、协议文档、seed 生成候选 PoC。</p>
+            </button>
+            <button class="card l1" data-node="runner">
+              <h3>Runner Sandbox</h3>
+              <p>在 vul/fix 环境中 replay PoC，收集 exit code、日志和 sanitizer。</p>
+            </button>
+            <button class="card l1" data-node="verifier">
+              <h3>Verifier</h3>
+              <p>vul 触发 + fix 不触发 = confirmed；否则 rejected/inconclusive。</p>
+            </button>
+          </div>
+        </div>
+
+        <div class="data-flow">
+          数据流 3：Ranker 输出 top-k likely findings → InputCrafter 生成 PoC → Runner 分别跑 vulnerable/fixed → Verifier 输出 verdict、证据和失败原因。
+        </div>
+
+        <div class="lane">
+          <div class="lane-label feedback">Feedback<br />Loop</div>
+          <div class="loop-box">
+            <button class="loop-node" data-node="failure">
+              <h3>失败归因</h3>
+              <p>定位错 / 格式错 / 环境错 / 前提不满足</p>
+            </button>
+            <div class="loop-arrow">→</div>
+            <button class="loop-node" data-node="improve">
+              <h3>更新 Harness</h3>
+              <p>调整 scope、skill card、checker 规则、rank 权重</p>
+            </button>
+            <div class="loop-arrow">→</div>
+            <button class="loop-node" data-node="rerun">
+              <h3>再次运行</h3>
+              <p>新一轮 attempts，比较 confirmed rate 和成本</p>
+            </button>
+            <div class="return-arrow">↺ verdict / failure reason / trace 回流到黑板与资源缺口清单</div>
+          </div>
+        </div>
+
+        <div class="tagline">
+          <div class="callout">
+            <b>核心边界</b>
+            <span>L2 最高只给 likely；confirmed 只能来自 L1 动态验证。</span>
+          </div>
+          <div class="callout">
+            <b>最小打样</b>
+            <span>3-5 个可复现任务包，每个都有 vul/fix、入口、判据、证据。</span>
+          </div>
+          <div class="callout">
+            <b>当前聚焦</b>
+            <span>先证明 harness 路线能跑通，并拿到 confirmed rate。</span>
+          </div>
+        </div>
+      </main>
+
+      <aside class="panel side">
+        <h2>点击模块看详情</h2>
+        <div class="detail-panel">
+          <div class="detail-title">
+            <h3 id="detail-title">目标任务</h3>
+            <p id="detail-summary">定义本次要分析的漏洞/风险点，让 agent 不从全仓库盲扫。</p>
+          </div>
+          <div class="detail-block">
+            <b>模块功能</b>
+            <ul id="detail-functions"></ul>
+          </div>
+          <div class="detail-block">
+            <b>需要的信息</b>
+            <ul id="detail-needs"></ul>
+          </div>
+          <div class="detail-block">
+            <b>数据源 / 输出</b>
+            <ul id="detail-data"></ul>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <footer>CyberGym harness draft · Task Package → L2 Reasoning → L1 Prove → Feedback Loop</footer>
+  </div>
+  <script>
+    const moduleDetails = {
+      task: {
+        title: "目标任务",
+        summary: "定义本次要分析的漏洞/风险点，让 agent 不从全仓库盲扫。",
+        functions: [
+          "限定分析范围：目标 repo、模块、入口、风险描述。",
+          "定义 agent 可见信息级别，避免把答案泄露给被评测 agent。",
+          "作为 Prepare 和 Auditor 的起始上下文。"
+        ],
+        needs: [
+          "task id、漏洞/风险描述、影响模块、高风险入口。",
+          "允许使用的信息：源码、描述、crash log、文档、seed。",
+          "不允许泄露的信息：patch、fixed 源码、参考 PoC、人工 root cause 标签。"
+        ],
+        data: [
+          "来源：业务方任务包 README、漏洞单、事故复盘。",
+          "输出：task_manifest.json、visibility_policy、scan_scope。"
+        ]
+      },
+      oracle: {
+        title: "vul / fix 对照",
+        summary: "为 L2 静态判分和 L1 动态验证提供真值边界。",
+        functions: [
+          "vulnerable 版本用于 agent 分析和 PoC replay。",
+          "fixed 版本用于确认修复后不再触发。",
+          "patch.diff 只给 judge/研究，不给正式挖洞 agent。"
+        ],
+        needs: [
+          "vulnerable commit/tag、fixed commit/tag、patch.diff。",
+          "依赖子模块、生成代码、构建参数保持一致。",
+          "修复说明和 commit message，用于离线标注。"
+        ],
+        data: [
+          "来源：代码仓库、修复 MR/PR、漏洞修复单。",
+          "输出：root-cause oracle、file/function/line 命中标签。"
+        ]
+      },
+      runtime: {
+        title: "运行与判据",
+        summary: "把候选 PoC 放进真实环境执行，并自动判断结果。",
+        functions: [
+          "定义输入怎么喂给系统：文件、CLI、fuzzer、HTTP/RPC。",
+          "定义什么算成功触发：crash、越权、泄露、规则绕过。",
+          "把手工复现步骤转成可重复脚本。"
+        ],
+        needs: [
+          "Dockerfile/镜像/compose、build.sh、run.sh、verify.sh。",
+          "timeout、内存、CPU 架构、网络、账号权限、脱敏规则。",
+          "正常样例、seed corpus、可选参考 PoC。"
+        ],
+        data: [
+          "来源：CI、测试环境、fuzz harness、业务复现文档。",
+          "输出：runner_config、verifier_rule、environment_health。"
+        ]
+      },
+      prepare: {
+        title: "Prepare Worker",
+        summary: "先把仓库整理成结构化索引，让后续 agent 不吞无关代码。",
+        functions: [
+          "抽取文件列表、函数范围、入口函数、include、crash frame 映射。",
+          "生成 candidate_scopes，限制 Auditor 读代码范围。",
+          "记录 prepare_trace，暴露索引失败或环境缺口。"
+        ],
+        needs: [
+          "repo-vul 源码、description、error/crash log。",
+          "compile_commands.json、CodeQL DB、ctags/tree-sitter 可选。",
+          "高风险入口清单：parser、decoder、API handler、fuzz target。"
+        ],
+        data: [
+          "输入：Task Package。",
+          "输出：code_map.json、symbols.json、entrypoints、candidate_scopes。"
+        ]
+      },
+      auditor: {
+        title: "Auditor Ensemble",
+        summary: "多个专职 auditor 用不同视角产出候选漏洞，不是一个 agent 多想几次。",
+        functions: [
+          "crash-guided：从 crash frames 回溯 root cause。",
+          "structure-guided：从 code_map 找 wrapper、parser、边界检查。",
+          "skill-guided：按 MSan/UAF/OOB/null-deref playbook 找候选。"
+        ],
+        needs: [
+          "Prepare 输出的 candidate_scopes 和函数范围。",
+          "bug class、sanitizer log、allocation/free/origin stack。",
+          "对应 skill card 和历史同类漏洞模式。"
+        ],
+        data: [
+          "输入：code_map、crash log、skill card。",
+          "输出：hypotheses、evidence_refs、confidence、worker trace。"
+        ]
+      },
+      blackboard: {
+        title: "Shared Blackboard",
+        summary: "所有 worker 的外部状态，不依赖单个模型上下文记忆。",
+        functions: [
+          "统一存储 hypotheses、evidence、code_map、rank、verdict、trace。",
+          "隔离 worker 私有 scratchpad，只接收结构化 delta。",
+          "让后续检查、排序、复盘可以追溯。"
+        ],
+        needs: [
+          "统一 schema：hypothesis、evidence、finding、verdict、failure_reason。",
+          "worker id、read history、accept/reject delta 原因。",
+          "运行产物目录和日志存储。"
+        ],
+        data: [
+          "输入：所有 worker 提交的结构化结果。",
+          "输出：ranked findings、可观测 trace、实验复盘材料。"
+        ]
+      },
+      checker: {
+        title: "Evidence Checker",
+        summary: "专门检查证据缺口和硬约束，避免停留在口头判断。",
+        functions: [
+          "检查候选是否有源码证据、crash 证据、可达性证据。",
+          "找 missing evidence：未读关键函数、缺少输入可控性、前提不满足。",
+          "给 confidence_delta，但不凭口头判断直接下结论。"
+        ],
+        needs: [
+          "hypothesis、evidence_refs、crash log、code_map。",
+          "source-to-sink 路径、输入可控性、初始化/释放/边界检查证据。",
+          "反例规则：fixed patch 位置、正常路径、不可达路径。"
+        ],
+        data: [
+          "输入：Shared Blackboard 中的候选和证据。",
+          "输出：checks、missing_evidence、confidence_delta、reject_reason。"
+        ]
+      },
+      ranker: {
+        title: "Ranker / Prioritizer",
+        summary: "把候选合并、排序，选出值得进入 L1 Prove 的 top-k。",
+        functions: [
+          "按 root cause 合并重复发现。",
+          "按可达性、触发前提、影响、可利用性和证据质量排序。",
+          "输出 high-value likely findings，控制 L1 验证成本。"
+        ],
+        needs: [
+          "hypotheses、checker checks、evidence、bug class。",
+          "业务资产重要性、暴露面、权限模型、修复 SLA。",
+          "L1 历史 confirmed/rejected 结果用于校准。"
+        ],
+        data: [
+          "输入：blackboard 全量结构化结果。",
+          "输出：ranked_findings.json、top-k likely、triage reason。"
+        ]
+      },
+      inputcrafter: {
+        title: "InputCrafter",
+        summary: "把 likely finding 转成候选 PoC 输入，是 L2 到 L1 的桥。",
+        functions: [
+          "根据 bug class 和 root cause 选择输入构造策略。",
+          "从 seed/正常样例 mutation，避免卡在格式合法性。",
+          "读取上一轮失败反馈，调整下一轮 PoC。"
+        ],
+        needs: [
+          "top-k finding、bug class、触发前提、harness info。",
+          "协议文档、文件格式、状态机、正常样例、seed corpus。",
+          "上一轮 verifier failure reason。"
+        ],
+        data: [
+          "输入：ranked findings + harness docs + seed。",
+          "输出：poc_*.bin / request payload / CLI args、attempts.jsonl。"
+        ]
+      },
+      runner: {
+        title: "Runner Sandbox",
+        summary: "唯一真正执行 PoC 的层，隔离环境并采集动态证据。",
+        functions: [
+          "分别在 vulnerable 和 fixed 环境运行候选 PoC。",
+          "采集 stdout/stderr、exit code、sanitizer、coverage、核心日志。",
+          "把 infra error 和业务失败分开标注。"
+        ],
+        needs: [
+          "vul/fix 镜像或环境、run command、资源限制。",
+          "Docker registry mirror、amd64 runner、网络/权限隔离。",
+          "超时、内存、CPU 架构、日志路径。"
+        ],
+        data: [
+          "输入：candidate PoC + runner_config。",
+          "输出：vul_result、fix_result、raw logs、infra_error 标签。"
+        ]
+      },
+      verifier: {
+        title: "Verifier",
+        summary: "把运行结果转成 confirmed / rejected / inconclusive。",
+        functions: [
+          "判定 pre-patch 是否触发，post-patch 是否 clean。",
+          "区分 false positive：vul/fix 都 crash 或 vul 不 crash。",
+          "生成失败原因，驱动下一轮 loop。"
+        ],
+        needs: [
+          "验证规则：exit code、日志关键字、断言、业务状态变化。",
+          "vul_result、fix_result、sanitizer kind、stack trace。",
+          "人工复核规则，用于处理业务类漏洞。"
+        ],
+        data: [
+          "输入：Runner 结果。",
+          "输出：verdict、failure_reason、confirmed evidence、prove_results.jsonl。"
+        ]
+      },
+      failure: {
+        title: "失败归因",
+        summary: "只知道失败没用，必须知道为什么失败。",
+        functions: [
+          "把失败拆成定位错、PoC 格式错、环境错、前提不满足、判据不清。",
+          "统计不同 worker / skill card / bug class 的失败模式。",
+          "形成下一轮修正动作。"
+        ],
+        needs: [
+          "Verifier verdict、Runner 原始日志、InputCrafter attempt。",
+          "worker trace、read history、checker reject_reason。",
+          "人工审核补充原因。"
+        ],
+        data: [
+          "输入：verdict + trace + logs。",
+          "输出：failure_reason 分布、资源缺口、下一轮 action。"
+        ]
+      },
+      improve: {
+        title: "更新 Harness",
+        summary: "把失败反馈转成系统改进，而不是只让模型重试。",
+        functions: [
+          "补充 code_map scope、修改 checker 规则、调整 rank 权重。",
+          "更新 skill card 或 format/domain plugin。",
+          "标记业务方还缺哪些数据。"
+        ],
+        needs: [
+          "失败归因、人工复核、历史 attempts 成本。",
+          "confirmed/rejected 样本、误报原因、漏报原因。",
+          "业务方新增文档、seed、环境修复。"
+        ],
+        data: [
+          "输入：Feedback Collector 输出。",
+          "输出：harness config 更新、skill card 更新、resource_request。"
+        ]
+      },
+      rerun: {
+        title: "再次运行",
+        summary: "用同一批任务对比改进前后效果，形成投资汇报指标。",
+        functions: [
+          "重新跑 top-k attempts，比较 confirmed rate。",
+          "观察 attempts-to-confirm、false positive rate、成本变化。",
+          "把结果沉淀为可复现评测报告。"
+        ],
+        needs: [
+          "固定任务集、固定预算、可重复 runner、版本化配置。",
+          "实验组/对照组：无 skill card、有 skill card、多 auditor 等。",
+          "batch 运行预算和产物存储。"
+        ],
+        data: [
+          "输入：updated harness + same task set。",
+          "输出：ab_report、confirmed rate、资源 ROI 说明。"
+        ]
+      }
+    };
+
+    const titleEl = document.getElementById("detail-title");
+    const summaryEl = document.getElementById("detail-summary");
+    const functionsEl = document.getElementById("detail-functions");
+    const needsEl = document.getElementById("detail-needs");
+    const dataEl = document.getElementById("detail-data");
+    const clickableNodes = document.querySelectorAll("[data-node]");
+
+    function renderList(target, items) {
+      target.innerHTML = "";
+      items.forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        target.appendChild(li);
+      });
+    }
+
+    function selectNode(key) {
+      const detail = moduleDetails[key];
+      if (!detail) return;
+
+      titleEl.textContent = detail.title;
+      summaryEl.textContent = detail.summary;
+      renderList(functionsEl, detail.functions);
+      renderList(needsEl, detail.needs);
+      renderList(dataEl, detail.data);
+
+      clickableNodes.forEach((node) => {
+        node.classList.toggle("active", node.dataset.node === key);
+      });
+    }
+
+    clickableNodes.forEach((node) => {
+      node.addEventListener("click", () => selectNode(node.dataset.node));
+    });
+
+    selectNode("task");
+  </script>
+</body>
+</html>

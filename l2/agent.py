@@ -55,6 +55,43 @@ as ONE JSON object on its own (a ```json fence is fine but not required):
 The JSON object MUST be the last thing in your reply. Emit exactly one per turn.
 """
 
+# Neutral baseline: same task + mechanics, but WITHOUT the root-cause-tracing
+# methodology (no "crash != patch site", no upstream-init hints). That domain
+# knowledge is what skill cards are supposed to supply, so it must NOT be baked
+# into the baseline -- otherwise an A/B of off-vs-cards measures nothing.
+LEAN_SYSTEM = """\
+You are a vulnerability-localization reasoner. Given a real open-source project
+at a known-vulnerable version, plus a bug description and (sometimes) a crash
+log, your job is to deduce the location of the vulnerability: the file, function
+and line that the eventual security patch would modify.
+
+Workflow:
+1. Use distinctive identifiers from the bug description and the PRESEED search
+   results below to locate candidate code (`search_code`, then `read_file`).
+2. **Record up to 3 RANKED candidates with `upsert_hypothesis`** (file, function,
+   line, bug_class, confidence). This is your most important deliverable. You
+   must have `read_file`d the exact line you cite.
+3. (Optional) `challenge` your current ranking, then adjust hypotheses.
+4. `conclude`.
+
+Rules:
+- Your context memory is limited; persist findings via memory tools. Each turn
+  you only see a compact view of memory, not the full history.
+- `conclude` is rejected unless you have >=1 hypothesis whose cited file:line you
+  actually read. Do not assert a location you have not opened.
+- Use file paths EXACTLY as returned by the tools; do not guess paths.
+- If an action returns an ERROR, do not repeat it unchanged -- fix it or switch.
+- Don't over-explore: once you have read the key functions, record hypotheses and
+  conclude. Aim to finish within the step budget.
+
+Output format: at most TWO short sentences of reasoning, then emit your action
+as ONE JSON object on its own (a ```json fence is fine but not required):
+```json
+{"action": "<tool_name>", "args": { ... }}
+```
+The JSON object MUST be the last thing in your reply. Emit exactly one per turn.
+"""
+
 _STOP = set("""the a an and or but not to in of for with from this that these those
 is are was were be been being it its as at by on off into out up down over under
 bug causes cause does always force because return returns initialize initialized
@@ -173,7 +210,7 @@ def build_task_brief(task):
     return "\n".join(parts)
 
 
-def _directive(memory, tools, step, max_steps):
+def _directive(memory, tools, step, max_steps, lean=False):
     hyps = list(memory.hypotheses.values())
     left = max_steps - step
     if not hyps:
@@ -182,7 +219,10 @@ def _directive(memory, tools, step, max_steps):
     files = {(h.get("file") or "").split("/")[-1] for h in hyps}
     msgs = []
     if len(files) < 2 and left > 3:
-        msgs.append("You have only ONE candidate location, but the patch is often at a DIFFERENT (upstream init/validation) function than the use/crash site. Add a SECOND, DISTINCT candidate (different file/function) you have read.")
+        if lean:
+            msgs.append("You have only ONE candidate location. Add a SECOND, DISTINCT candidate (different file/function) you have read.")
+        else:
+            msgs.append("You have only ONE candidate location, but the patch is often at a DIFFERENT (upstream init/validation) function than the use/crash site. Add a SECOND, DISTINCT candidate (different file/function) you have read.")
     if grounded and tools.challenge_count < 1:
         msgs.append("Run `challenge` once (argue why the patch might be at an upstream function), then conclude.")
     if grounded and (tools.challenge_count >= 1 or left <= 3):
@@ -192,18 +232,23 @@ def _directive(memory, tools, step, max_steps):
     return ("DIRECTIVE: " + " ".join(msgs)) if msgs else ""
 
 
-def _turn_suffix(memory, tools, step, max_steps):
-    d = _directive(memory, tools, step, max_steps)
+def _turn_suffix(memory, tools, step, max_steps, lean=False):
+    d = _directive(memory, tools, step, max_steps, lean=lean)
     return (f"\n\n[MEMORY]\n{memory.compact_view()}\n[STEP {step}/{max_steps}]"
             + (f"\n{d}" if d else ""))
 
 
-def run(task, tools, memory, model=None, max_steps=20, trace_path=None, verbose=True):
+def run(task, tools, memory, model=None, max_steps=20, trace_path=None,
+        verbose=True, skill_text="", lean=False):
     brief = build_task_brief(task)
+    if skill_text:
+        # Inject expert playbooks before the auto-search seed so the agent reads
+        # methodology first, then the concrete hits.
+        brief = brief + "\n\n" + skill_text
     seed = preseed(task, tools)
     if seed:
         brief = brief + "\n\n" + seed
-    history = [{"role": "system", "content": SYSTEM},
+    history = [{"role": "system", "content": LEAN_SYSTEM if lean else SYSTEM},
                {"role": "user", "content": brief + "\n\nBegin. End EVERY reply with "
                 "exactly one JSON action object as the last thing."}]
     trace = []
@@ -237,7 +282,7 @@ def run(task, tools, memory, model=None, max_steps=20, trace_path=None, verbose=
             trace.append({"step": step, "action": "PARSE_ERROR", "args": {}, "raw": reply[:400]})
             if verbose:
                 print(f"[{step}] PARSE_ERROR")
-            history.append({"role": "user", "content": obs + _turn_suffix(memory, tools, step, max_steps)})
+            history.append({"role": "user", "content": obs + _turn_suffix(memory, tools, step, max_steps, lean=lean)})
         else:
             name, args = action["action"], action.get("args", {})
             obs = tools.dispatch(name, args)
@@ -250,7 +295,7 @@ def run(task, tools, memory, model=None, max_steps=20, trace_path=None, verbose=
             if verbose:
                 print(f"[{step}] {name} {json.dumps(args, ensure_ascii=False)[:90]} -> "
                       f"{(obs[:70].splitlines() or [''])[0]}")
-            history.append({"role": "user", "content": obs[:1800] + _turn_suffix(memory, tools, step, max_steps)})
+            history.append({"role": "user", "content": obs[:1800] + _turn_suffix(memory, tools, step, max_steps, lean=lean)})
 
         flush()
         if tools.done:

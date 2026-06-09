@@ -107,7 +107,51 @@ Prioritizer 自己输出的打分维度：
 .venv/bin/python -m l2.batch --max-steps 22
 ```
 
-参数：`--level 1`（仅描述）/ `2`（+ crash log）；`--model`（覆盖 .env）；`--max-steps`。
+参数：`--level 1`（仅描述）/ `2`（+ crash log）；`--model`（覆盖 .env）；`--max-steps`；
+`--skills off|auto|all`（注入 bug-class skill card）；`--lean`（中立 baseline 提示）。
+
+## Skill cards（bug-class 专属定位 playbook）+ A/B 实验
+
+**机制**（依据 DebugHarness 的 signature-driven 注入、Root-Cause-Driven AVR 的
+crash-class 证据加权）：`skills.py` 解析 crash log/描述里的 sanitizer 类型 → 只注入匹配的
+专家卡片到 agent 上下文。卡片在 `l2/skills/*.md`，带 `applies_to` frontmatter：
+
+| 卡片 | 适用 | 核心先验 |
+|------|------|----------|
+| `crash-to-rootcause` | 全部 | 丢弃 harness/stdlib 帧；按 crash class 给栈帧加权；症状→上游回溯 |
+| `msan-uninitialized` | MSan | patch 在 init/分配点；"created by allocation in F" 顺藤摸到把缓冲传给库函数(regexec)的 wrapper |
+| `heap-buffer-overflow` | ASan 溢出/OOB | bug 在长度/索引计算，不在 memcpy；WRITE>READ |
+| `use-after-free` | UAF/double-free | free stack 信号最高；double-free 找 aliasing/浅拷贝 |
+| `null-deref` | SEGV/null | 缺失的 NULL 检查；可返回 NULL 的 producer |
+
+**A/B 实验**：`python -m l2.ab` 对每个 task 跑 `off` 与 `auto` 两次，配对比较定位 grade。
+默认用 `--lean`（中立 baseline）——否则 baseline 的 SYSTEM prompt 自带方法论会污染对照。
+
+```bash
+.venv/bin/python -m l2.ab --level 2 --max-steps 22            # 干净对照（lean baseline）
+.venv/bin/python -m l2.ab --rich-baseline --tasks arvo:1065   # 用原 rich prompt
+```
+
+### 两轮结果（n=9，level2）
+
+| baseline | mode | mean grade_any | file 命中 | fn 命中 | 配对 off→auto |
+|----------|------|----------------|-----------|---------|----------------|
+| **rich**（原 prompt 自带方法论） | off / auto | 1.222 → **1.111** | 0.556→0.444 | 0.333→0.333 | 0 升 / **1 降** / 8 平 |
+| **lean**（方法论只放卡片） | off / auto | 1.556 → **1.778** | 0.667→0.667 | 0.444→**0.556** | **1 升** / 0 降 / 8 平 |
+
+**结论**：skill card 的价值 = **它填补的知识缺口**，不是卡片本身。
+- baseline 已内置同款方法论时（rich），卡片冗余甚至添噪 → **反而拉低**（1 例提前 conclude 回归）。
+- baseline 中立时（lean），卡片带来**小幅正收益**（1 task 由 file 升到 line，mean +0.22，fn 命中
+  +0.11，零回归）；rich 下那例回归在 lean 下消失。
+
+**重要限制**（决定下一步要什么数据）：
+- n=9、仅 1 个 task 翻盘，**效应小且无重复测量**，LLM 非确定性会带来同量级噪声 → 需更多 task +
+  每 cell 重复 3 次取均值/方差才算数。
+- 3 个 task（arvo:47101 / oss-fuzz:370689421 / 385167047）两组都 hard-miss，卡片救不回 → 这是
+  **定位能力 gap**（需更强工具/动态证据），不是 prompt 能补的。
+- 指标仍是**静态定位弱代理**；skill card 的真正考验应是 **L1 confirmed 率**的增量，尚未接卡片。
+
+结果存 `runs/ab_*.json`（`baseline` 字段区分 lean/rich）。
 
 ## 产物（`runs/<task>_<ts>/`）
 - `report.md` — 定位 grade、ground truth、ranked 假设、动作轨迹
